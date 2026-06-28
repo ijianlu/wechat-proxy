@@ -173,16 +173,24 @@ def add_draft():
         thumb_url = body.get("thumb_url", "")
         footer_img_url = body.get("footer_img_url", "")
         footer_img_base64 = body.get("footer_img_base64", "")
+        header_img_url = body.get("header_img_url", "")
+        header_img_base64 = body.get("header_img_base64", "")
         content = filter_html(content)
         access_token = get_access_token(appid, appsecret)
         if thumb_url and not thumb_media_id:
             thumb_media_id = upload_thumb(access_token, thumb_url)
+        # 自动拼接头图
+        if header_img_base64:
+            wx_header_url = upload_article_image_from_base64(access_token, header_img_base64, "image/gif")
+            content = f'<p style="text-align:center;margin:0 0 20px 0;text-indent:0;padding:0;"><img src="{wx_header_url}" style="max-width:100%;" /></p>' + content
+        elif header_img_url:
+            content = f'<p style="text-align:center;margin:0 0 20px 0;text-indent:0;padding:0;"><img src="{header_img_url}" style="max-width:100%;" /></p>' + content
         # 自动拼接尾图
         if footer_img_base64:
             wx_footer_url = upload_article_image_from_base64(access_token, footer_img_base64, "image/png")
-            content += f'<p style="text-align:center;margin:30px 0 10px 0;"><img src="{wx_footer_url}" style="max-width:100%;" /></p>'
+            content += f'<p style="text-align:center;margin:30px 0 10px 0;text-indent:0;padding:0;"><img src="{wx_footer_url}" style="max-width:100%;" /></p>'
         elif footer_img_url:
-            content += f'<p style="text-align:center;margin:30px 0 10px 0;"><img src="{footer_img_url}" style="max-width:100%;" /></p>'
+            content += f'<p style="text-align:center;margin:30px 0 10px 0;text-indent:0;padding:0;"><img src="{footer_img_url}" style="max-width:100%;" /></p>'
         # 自动上传文章内的外部图片
         content = process_content_images(access_token, content)
         articles = [{
