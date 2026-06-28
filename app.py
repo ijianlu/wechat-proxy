@@ -136,7 +136,7 @@ def upload_thumb_endpoint():
 
 @app.route("/upload_article_img", methods=["POST"])
 def upload_article_img_endpoint():
-    """上传文章内嵌图片，返回微信CDN URL"""
+    """上传文章内嵌图片，返回微信CDN URL。支持 img_url 或 image_base64"""
     try:
         body = request.get_json()
         if not body:
@@ -144,12 +144,17 @@ def upload_article_img_endpoint():
         appid = body.get("appid")
         appsecret = body.get("appsecret")
         img_url = body.get("img_url")
+        img_b64 = body.get("image_base64")
+        mime_type = body.get("mime_type", "image/png")
         if not appid or not appsecret:
             return jsonify({"errcode": 400, "errmsg": "缺少 appid 或 appsecret"}), 400
-        if not img_url:
-            return jsonify({"errcode": 400, "errmsg": "缺少 img_url"}), 400
         access_token = get_access_token(appid, appsecret)
-        wx_url = upload_article_image(access_token, img_url)
+        if img_b64:
+            wx_url = upload_article_image_from_base64(access_token, img_b64, mime_type)
+        elif img_url:
+            wx_url = upload_article_image(access_token, img_url)
+        else:
+            return jsonify({"errcode": 400, "errmsg": "缺少 img_url 或 image_base64"}), 400
         return jsonify({"errcode": 0, "errmsg": "ok", "url": wx_url})
     except Exception as e:
         return jsonify({"errcode": 500, "errmsg": str(e)}), 500
