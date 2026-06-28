@@ -1,11 +1,8 @@
-# 微信公众号草稿箱中转服务 - 修复版
-# 修复内容：解决中文被转义为 \uXXXX 的问题
-# 部署方法：将此文件替换 GitHub 仓库中的 app.py，Render 会自动重新部署
-
-"""
-微信公众号草稿箱中转服务（修复版）
-修复了中文内容被转义为 \\uXXXX 的问题
-"""
+# 微信公众号草稿箱中转服务 - v3
+# 修复内容：
+# 1. 解决中文被转义为 \uXXXX 的问题
+# 2. 自动上传文章内外部图片到微信服务器
+# 3. 支持尾图自动拼接
 
 from flask import Flask, request, jsonify
 import requests
@@ -18,6 +15,7 @@ app = Flask(__name__)
 WX_TOKEN_URL = "https://api.weixin.qq.com/cgi-bin/token"
 WX_DRAFT_URL = "https://api.weixin.qq.com/cgi-bin/draft/add"
 WX_UPLOAD_IMG = "https://api.weixin.qq.com/cgi-bin/material/add_material"
+WX_UPLOAD_ARTICLE_IMG = "https://api.weixin.qq.com/cgi-bin/media/uploadimg"
 
 _token_cache = {"token": None, "expires_at": 0}
 
@@ -46,7 +44,7 @@ def filter_html(content):
     return content
 
 def upload_thumb(access_token, thumb_url):
-    """上传图片到微信素材库，返回 media_id"""
+    """上传图片到微信素材库，返回 media_id（用于封面图）"""
     if not thumb_url:
         return None
     img_resp = requests.get(thumb_url, timeout=30)
@@ -61,7 +59,53 @@ def upload_thumb(access_token, thumb_url):
     if "media_id" in result:
         return result["media_id"]
     else:
-        raise Exception(f"上传图片失败: {result}")
+        raise Exception(f"上传封面图失败: {result}")
+
+def upload_article_image(access_token, img_url):
+    """上传文章内嵌图片到微信服务器，返回微信CDN URL"""
+    img_resp = requests.get(img_url, timeout=30)
+    img_resp.raise_for_status()
+    # 检测实际图片类型
+    content_type = img_resp.headers.get('Content-Type', '')
+    if 'png' in content_type:
+        ext = 'png'
+        mime = 'image/png'
+    elif 'gif' in content_type:
+        ext = 'gif'
+        mime = 'image/gif'
+    else:
+        ext = 'jpg'
+        mime = 'image/jpeg'
+    files = {"media": (f"article_img.{ext}", io.BytesIO(img_resp.content), mime)}
+    resp = requests.post(
+        f"{WX_UPLOAD_ARTICLE_IMG}?access_token={access_token}",
+        files=files,
+        timeout=30
+    )
+    result = resp.json()
+    if "url" in result:
+        return result["url"]
+    else:
+        raise Exception(f"上传文章图片失败: {result}")
+
+def process_content_images(access_token, content):
+    """自动将 content 中的外部图片URL替换为微信CDN URL"""
+    img_pattern = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+    matches = img_pattern.findall(content)
+    seen = {}
+    for img_url in matches:
+        if img_url in seen:
+            content = content.replace(img_url, seen[img_url])
+            continue
+        if 'mmbiz.qpic.cn' in img_url or 'wx.qlogo.cn' in img_url:
+            continue
+        try:
+            wx_url = upload_article_image(access_token, img_url)
+            seen[img_url] = wx_url
+            content = content.replace(img_url, wx_url)
+        except Exception as e:
+            print(f"上传图片 {img_url} 失败: {e}")
+    return content
 
 @app.route("/upload_thumb", methods=["POST"])
 def upload_thumb_endpoint():
@@ -83,9 +127,29 @@ def upload_thumb_endpoint():
     except Exception as e:
         return jsonify({"errcode": 500, "errmsg": str(e)}), 500
 
+@app.route("/upload_article_img", methods=["POST"])
+def upload_article_img_endpoint():
+    """上传文章内嵌图片，返回微信CDN URL"""
+    try:
+        body = request.get_json()
+        if not body:
+            return jsonify({"errcode": 400, "errmsg": "请求体为空"}), 400
+        appid = body.get("appid")
+        appsecret = body.get("appsecret")
+        img_url = body.get("img_url")
+        if not appid or not appsecret:
+            return jsonify({"errcode": 400, "errmsg": "缺少 appid 或 appsecret"}), 400
+        if not img_url:
+            return jsonify({"errcode": 400, "errmsg": "缺少 img_url"}), 400
+        access_token = get_access_token(appid, appsecret)
+        wx_url = upload_article_image(access_token, img_url)
+        return jsonify({"errcode": 0, "errmsg": "ok", "url": wx_url})
+    except Exception as e:
+        return jsonify({"errcode": 500, "errmsg": str(e)}), 500
+
 @app.route("/add_draft", methods=["POST"])
 def add_draft():
-    """创建微信公众号草稿"""
+    """创建微信公众号草稿 - 自动处理文章内图片"""
     try:
         body = request.get_json()
         if not body:
@@ -100,10 +164,17 @@ def add_draft():
         digest = body.get("digest", "")
         thumb_media_id = body.get("thumb_media_id", "")
         thumb_url = body.get("thumb_url", "")
+        # 自动拼接尾图（如果传了 footer_img_url）
+        footer_img_url = body.get("footer_img_url", "")
+        if footer_img_url:
+            # 把尾图添加到文章末尾
+            content += f'<p style="text-align:center;margin:30px 0 10px 0;"><img src="{footer_img_url}" style="max-width:100%;" /></p>'
         content = filter_html(content)
         access_token = get_access_token(appid, appsecret)
         if thumb_url and not thumb_media_id:
             thumb_media_id = upload_thumb(access_token, thumb_url)
+        # 自动上传文章内的外部图片
+        content = process_content_images(access_token, content)
         articles = [{
             "title": title,
             "author": author,
@@ -114,8 +185,6 @@ def add_draft():
             "need_open_comment": 0,
             "only_fans_can_comment": 0
         }]
-        # 【关键修复】使用 ensure_ascii=False 防止中文被转义为 \\uXXXX
-        # 使用 data= 而不是 json=，避免 requests 内部再次调用 json.dumps
         payload_str = json.dumps({"articles": articles}, ensure_ascii=False)
         resp = requests.post(
             f"{WX_DRAFT_URL}?access_token={access_token}",
