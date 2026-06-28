@@ -76,6 +76,14 @@ def add_draft():
     except Exception as e:
         return jsonify({"errcode": 500, "errmsg": str(e)}), 500
 
+@app.route("/myip", methods=["GET"])
+def myip():
+    try:
+        resp = requests.get("https://api.ipify.org?format=json", timeout=10)
+        return resp.json()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
