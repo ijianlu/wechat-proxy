@@ -62,21 +62,28 @@ def upload_thumb(access_token, thumb_url):
         raise Exception(f"上传封面图失败: {result}")
 
 def upload_article_image(access_token, img_url):
-    """上传文章内嵌图片到微信服务器，返回微信CDN URL"""
+    """上传文章内嵌图片到微信服务器（从URL下载），返回微信CDN URL"""
     img_resp = requests.get(img_url, timeout=30)
     img_resp.raise_for_status()
-    # 检测实际图片类型
     content_type = img_resp.headers.get('Content-Type', '')
     if 'png' in content_type:
-        ext = 'png'
-        mime = 'image/png'
+        ext, mime = 'png', 'image/png'
     elif 'gif' in content_type:
-        ext = 'gif'
-        mime = 'image/gif'
+        ext, mime = 'gif', 'image/gif'
     else:
-        ext = 'jpg'
-        mime = 'image/jpeg'
-    files = {"media": (f"article_img.{ext}", io.BytesIO(img_resp.content), mime)}
+        ext, mime = 'jpg', 'image/jpeg'
+    return _upload_article_image_bytes(access_token, img_resp.content, ext, mime)
+
+def upload_article_image_from_base64(access_token, b64_data, mime="image/png"):
+    """上传文章内嵌图片到微信服务器（从base64），返回微信CDN URL"""
+    import base64
+    img_bytes = base64.b64decode(b64_data)
+    ext = 'png' if 'png' in mime else 'jpg'
+    return _upload_article_image_bytes(access_token, img_bytes, ext, mime)
+
+def _upload_article_image_bytes(access_token, img_bytes, ext, mime):
+    """上传图片字节数据到微信服务器，返回微信CDN URL"""
+    files = {"media": (f"article_img.{ext}", io.BytesIO(img_bytes), mime)}
     resp = requests.post(
         f"{WX_UPLOAD_ARTICLE_IMG}?access_token={access_token}",
         files=files,
@@ -164,15 +171,18 @@ def add_draft():
         digest = body.get("digest", "")
         thumb_media_id = body.get("thumb_media_id", "")
         thumb_url = body.get("thumb_url", "")
-        # 自动拼接尾图（如果传了 footer_img_url）
         footer_img_url = body.get("footer_img_url", "")
-        if footer_img_url:
-            # 把尾图添加到文章末尾
-            content += f'<p style="text-align:center;margin:30px 0 10px 0;"><img src="{footer_img_url}" style="max-width:100%;" /></p>'
+        footer_img_base64 = body.get("footer_img_base64", "")
         content = filter_html(content)
         access_token = get_access_token(appid, appsecret)
         if thumb_url and not thumb_media_id:
             thumb_media_id = upload_thumb(access_token, thumb_url)
+        # 自动拼接尾图
+        if footer_img_base64:
+            wx_footer_url = upload_article_image_from_base64(access_token, footer_img_base64, "image/png")
+            content += f'<p style="text-align:center;margin:30px 0 10px 0;"><img src="{wx_footer_url}" style="max-width:100%;" /></p>'
+        elif footer_img_url:
+            content += f'<p style="text-align:center;margin:30px 0 10px 0;"><img src="{footer_img_url}" style="max-width:100%;" /></p>'
         # 自动上传文章内的外部图片
         content = process_content_images(access_token, content)
         articles = [{
