@@ -51,7 +51,7 @@ def upload_thumb(access_token, thumb_url):
     img_resp.raise_for_status()
     files = {"media": ("thumb.jpg", io.BytesIO(img_resp.content), "image/jpeg")}
     resp = requests.post(
-        f"{WX_UPLOAD_IMG}?access_token={access_token}&type=image",
+        f"{WX_UPLOAD_IMG}?access_token={access_token}&type=thumb",
         files=files,
         timeout=30
     )
